@@ -1,7 +1,12 @@
 # Builds the memreduct fork (with the Tools menu patch) on a GitHub-hosted
 # Windows runner, so nothing needs installing locally.
-# Repo layout expected: this file at .github/workflows/build.yml in your memreduct
-# fork, and the curated scripts at tools/ in the repo root.
+#
+# Produces two artifacts per run:
+#   memreduct-tools-x64        portable folder (exe + memreduct.lng + tools\ + memreduct.ini)
+#   memreduct-tools-installer  memreduct-<ver>-setup.exe (x64 + ARM64) and a .sha256 file
+#
+# The installer reuses Henry's NSIS script from henrypp/builder, patched to also
+# install/uninstall the tools\ folder and to show this fork in the copyright line.
 
 name: build
 
@@ -14,6 +19,14 @@ on:
         description: "henrypp/routine commit/branch to build against (use an older SHA if upstream drift breaks the build)"
         default: ff8f811b6520bc0b60754244660f39f6f3007497
         required: false
+      builder_ref:
+        description: "henrypp/builder commit to take the NSIS installer script from"
+        default: 124afc79ce0462170d66df1922be5944dea85dfb
+        required: false
+
+env:
+  ROUTINE_REF: ${{ github.event.inputs.routine_ref || 'ff8f811b6520bc0b60754244660f39f6f3007497' }}
+  BUILDER_REF: ${{ github.event.inputs.builder_ref || '124afc79ce0462170d66df1922be5944dea85dfb' }}
 
 jobs:
   build:
@@ -29,8 +42,15 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: henrypp/routine
-          ref: ${{ github.event.inputs.routine_ref || 'ff8f811b6520bc0b60754244660f39f6f3007497' }}
+          ref: ${{ env.ROUTINE_REF }}
           path: routine
+
+      - name: Checkout builder (Henry's installer scripts)
+        uses: actions/checkout@v5
+        with:
+          repository: henrypp/builder
+          ref: ${{ env.BUILDER_REF }}
+          path: builder
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -39,20 +59,130 @@ jobs:
         working-directory: memreduct
         run: msbuild memreduct.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
-      - name: Stage output
+      # Henry's installer picks the native ARM64 exe on ARM devices. If this
+      # build fails, the packaging step falls back to the x64 exe (Windows on
+      # ARM runs it under emulation) instead of failing the whole run.
+      - name: Build Release ARM64
+        id: arm64
+        continue-on-error: true
+        working-directory: memreduct
+        run: msbuild memreduct.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:minimal
+
+      - name: Read version
+        id: ver
         shell: pwsh
         run: |
-          $out = "memreduct\bin\64"
-          New-Item -ItemType Directory -Force "dist" | Out-Null
-          Copy-Item "$out\memreduct.exe" dist\
-          if (Test-Path "memreduct\tools") { Copy-Item "memreduct\tools" dist\tools -Recurse }
-          if (Test-Path "memreduct\bin\i18n") { Copy-Item "memreduct\bin\i18n" dist\i18n -Recurse }
+          $m = Select-String -Path memreduct\src\app.h -Pattern 'APP_VERSION\s+L"([^"]+)"'
+          if (-not $m) { throw "APP_VERSION not found in src\app.h" }
+          $v = $m.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Stage portable output
+        shell: pwsh
+        run: |
+          $bin = "memreduct\bin"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "$bin\64\memreduct.exe" dist\
+          # memreduct.lng is the compiled translation file the app actually reads
+          Copy-Item "$bin\memreduct.lng", "$bin\History.txt", "$bin\License.txt", "$bin\Readme.txt" dist\
+          Copy-Item memreduct\tools dist\tools -Recurse
           # portable mode marker so it doesn't touch %APPDATA% on first run
           New-Item -ItemType File "dist\memreduct.ini" | Out-Null
           Get-ChildItem dist -Recurse | Select-Object FullName, Length
 
-      - name: Upload artifact
+      - name: Stage installer payload
+        shell: pwsh
+        run: |
+          # Same layout builder's build_package.py produces: <dir>\64 and <dir>\ARM64
+          $bin = "memreduct\bin"
+          $pkg = "$env:RUNNER_TEMP\pkg"
+          foreach ($arch in '64', 'ARM64') {
+            New-Item -ItemType Directory -Force "$pkg\$arch" | Out-Null
+            Copy-Item "$bin\memreduct.lng", "$bin\History.txt", "$bin\License.txt", "$bin\Readme.txt" "$pkg\$arch\"
+            Copy-Item memreduct\tools "$pkg\$arch\tools" -Recurse
+          }
+          Copy-Item "$bin\64\memreduct.exe" "$pkg\64\"
+          if (Test-Path "$bin\ARM64\memreduct.exe") {
+            Copy-Item "$bin\ARM64\memreduct.exe" "$pkg\ARM64\"
+          } else {
+            Write-Host "::warning::ARM64 build missing - installer will put the x64 exe on ARM devices"
+            Copy-Item "$bin\64\memreduct.exe" "$pkg\ARM64\"
+          }
+
+      - name: Patch installer script
+        shell: pwsh
+        run: |
+          $nsi = "builder\src\setup_script.nsi"
+          $s = Get-Content $nsi -Raw
+
+          function Patch([string]$find, [string]$replace) {
+            if (-not $script:s.Contains($find)) { throw "Anchor not found in setup_script.nsi: $find" }
+            $script:s = $script:s.Replace($find, $replace)
+          }
+
+          # Install the tools folder alongside the exe
+          Patch "`tFile `"`${APP_FILES_DIR}\64\Readme.txt`"" ("`tFile `"`${APP_FILES_DIR}\64\Readme.txt`"`n`n" +
+            "`tSetOutPath `"`$INSTDIR\tools`"`n" +
+            "`tFile /r `"`${APP_FILES_DIR}\64\tools\*.*`"`n" +
+            "`tSetOutPath `$INSTDIR")
+
+          # Remove it again on uninstall
+          Patch "`tRMDir /r `"`$INSTDIR\plugins`"" ("`tRMDir /r `"`$INSTDIR\plugins`"`n" +
+            "`tRMDir /r `"`$INSTDIR\tools`"")
+
+          # Credit the fork. APP_AUTHOR is left as Henry++ on purpose: the
+          # uninstaller uses it to find the %APPDATA%\Henry++\Mem Reduct settings.
+          Patch '!define APP_WEBSITE        "https://github.com/henrypp"' `
+                '!define APP_WEBSITE        "https://github.com/${{ github.repository }}"'
+          Patch '!define COPYRIGHT          "(c) ${CURRENT_YEAR} ${APP_AUTHOR}. All Rights Reversed."' `
+                '!define COPYRIGHT          "(c) ${CURRENT_YEAR} Henry++, Tools menu by Phil Petitjean. GPL-3.0"'
+
+          Set-Content $nsi $s -NoNewline
+          Select-String -Path $nsi -Pattern 'tools|COPYRIGHT  |APP_WEBSITE  '
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          }
+          foreach ($d in "${env:ProgramFiles(x86)}\NSIS", "$env:ProgramFiles\NSIS") {
+            if (Test-Path "$d\makensis.exe") { $d >> $env:GITHUB_PATH }
+          }
+
+      - name: Build installer
+        shell: pwsh
+        working-directory: builder\src
+        run: |
+          $v   = "${{ steps.ver.outputs.version }}"
+          $out = "$env:GITHUB_WORKSPACE\installer"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $setup = "$out\memreduct-$v-setup.exe"
+          makensis.exe /V3 /INPUTCHARSET UTF8 `
+            "/DAPP_FILES_DIR=$env:RUNNER_TEMP\pkg" `
+            "/DAPP_NAME=Mem Reduct" `
+            "/DAPP_NAME_SHORT=memreduct" `
+            "/DAPP_VERSION=$v" `
+            "/XOutFile $setup" `
+            setup_script.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  memreduct-$v-setup.exe" | Set-Content "$out\memreduct-$v.sha256"
+          Get-ChildItem $out | Select-Object Name, Length
+          Write-Host "SHA-256: $hash"
+          if ("${{ steps.arm64.outcome }}" -ne "success") {
+            Write-Host "::warning::ARM64 compile failed; installer uses the x64 exe on ARM devices"
+          }
+
+      - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: memreduct-tools-x64
           path: dist
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memreduct-tools-installer
+          path: installer
