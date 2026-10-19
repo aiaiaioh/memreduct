@@ -1,0 +1,58 @@
+# Builds the memreduct fork (with the Tools menu patch) on a GitHub-hosted
+# Windows runner, so nothing needs installing locally.
+# Repo layout expected: this file at .github/workflows/build.yml in your memreduct
+# fork, and the curated scripts at tools/ in the repo root.
+
+name: build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      routine_ref:
+        description: "henrypp/routine commit/branch to build against (use an older SHA if upstream drift breaks the build)"
+        default: master
+        required: false
+
+jobs:
+  build:
+    # memreduct.vcxproj uses PlatformToolset v145 = VS 2026; the VS 2022 images won't have it
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v5
+        with:
+          path: memreduct
+
+      - name: Checkout routine (sibling folder, as the .vcxproj expects)
+        uses: actions/checkout@v5
+        with:
+          repository: henrypp/routine
+          ref: ${{ github.event.inputs.routine_ref || 'master' }}
+          path: routine
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        working-directory: memreduct
+        run: msbuild memreduct.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      - name: Stage output
+        shell: pwsh
+        run: |
+          $out = "memreduct\bin\64"
+          New-Item -ItemType Directory -Force "dist" | Out-Null
+          Copy-Item "$out\memreduct.exe" dist\
+          if (Test-Path "memreduct\tools") { Copy-Item "memreduct\tools" dist\tools -Recurse }
+          if (Test-Path "memreduct\bin\i18n") { Copy-Item "memreduct\bin\i18n" dist\i18n -Recurse }
+          # portable mode marker so it doesn't touch %APPDATA% on first run
+          New-Item -ItemType File "dist\memreduct.ini" | Out-Null
+          Get-ChildItem dist -Recurse | Select-Object FullName, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memreduct-tools-x64
+          path: dist
