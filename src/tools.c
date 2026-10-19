@@ -1,5 +1,5 @@
 // Mem Reduct - Tools menu
-// Copyright (c) 2026 <your name here>, GPL-3.0 (same as Mem Reduct)
+// Copyright (c) 2026 Phil Petitjean, GPL-3.0 (same as Mem Reduct)
 
 #include "routine.h"
 

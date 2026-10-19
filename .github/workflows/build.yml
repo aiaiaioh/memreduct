@@ -12,7 +12,7 @@ on:
     inputs:
       routine_ref:
         description: "henrypp/routine commit/branch to build against (use an older SHA if upstream drift breaks the build)"
-        default: master
+        default: ff8f811b6520bc0b60754244660f39f6f3007497
         required: false
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: henrypp/routine
-          ref: ${{ github.event.inputs.routine_ref || 'master' }}
+          ref: ${{ github.event.inputs.routine_ref || 'ff8f811b6520bc0b60754244660f39f6f3007497' }}
           path: routine
 
       - name: Set up MSBuild
