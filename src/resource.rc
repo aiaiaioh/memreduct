@@ -49,6 +49,10 @@ IDM_MAIN MENU
 	}
 	POPUP " "
 	{
+		MENUITEM " ", IDM_TOOLS_OPENFOLDER
+	}
+	POPUP " "
+	{
 		MENUITEM " ", IDM_WEBSITE
 		MENUITEM " ", IDM_CHECKUPDATES
 		MENUITEM " ", IDM_ABOUT
@@ -82,6 +86,10 @@ IDM_TRAY MENU
 		{
 			MENUITEM " ", IDM_TRAY_DISABLE_2
 			MENUITEM SEPARATOR
+		}
+		POPUP " "
+		{
+			MENUITEM " ", IDM_TOOLS_OPENFOLDER
 		}
 		MENUITEM SEPARATOR
 		MENUITEM " ", IDM_TRAY_SETTINGS
@@ -326,6 +334,11 @@ STRINGTABLE
 	IDS_TITLE_ADVANCED "Advanced"
 
 	IDS_USEDARKTHEME "Use dark theme"
+
+	IDS_TOOLS "Tools"
+	IDS_TOOLS_EMPTY "(no tools found - drop .ps1/.bat/.cmd/.reg files into the tools folder)"
+	IDS_TOOLS_OPENFOLDER "Open tools folder"
+	IDS_QUESTION_TOOL "Run this tool?"
 }
 
 //

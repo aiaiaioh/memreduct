@@ -5,6 +5,7 @@
 
 #include "main.h"
 #include "rapp.h"
+#include "tools.h"
 
 #include "resource.h"
 
@@ -1881,7 +1882,8 @@ INT_PTR CALLBACK DlgProc (
 				_r_menu_setitemtext (hmenu, 0, TRUE, _r_locale_getstring (IDS_FILE));
 				_r_menu_setitemtext (hmenu, 1, TRUE, _r_locale_getstring (IDS_VIEW));
 				_r_menu_setitemtext (hmenu, 2, TRUE, _r_locale_getstring (IDS_SETTINGS));
-				_r_menu_setitemtext (hmenu, 3, TRUE, _r_locale_getstring (IDS_HELP));
+				_r_menu_setitemtext (hmenu, TOOLS_MENU, TRUE, _r_locale_getstring (IDS_TOOLS));
+				_r_menu_setitemtext (hmenu, 4, TRUE, _r_locale_getstring (IDS_HELP));
 
 				_r_menu_setitemtextformat (hmenu, IDM_SETTINGS, FALSE, L"%s...\tF2", _r_locale_getstring (IDS_SETTINGS));
 				_r_menu_setitemtext (hmenu, IDM_EXIT, FALSE, _r_locale_getstring (IDS_EXIT));
@@ -1915,6 +1917,21 @@ INT_PTR CALLBACK DlgProc (
 			// enum localizations
 			if (hmenu)
 				_r_locale_enum (GetSubMenu (hmenu, LANG_SUBMENU), LANG_MENU, IDX_LANGUAGE);
+
+			break;
+		}
+
+		case WM_INITMENUPOPUP:
+		{
+			HMENU hmenu;
+
+			hmenu = GetMenu (hwnd);
+
+			if (hmenu && (HMENU)wparam == GetSubMenu (hmenu, TOOLS_MENU))
+			{
+				_app_tools_refresh ();
+				_app_tools_fillmenu ((HMENU)wparam, IDX_TOOLS, IDM_TOOLS_OPENFOLDER);
+			}
 
 			break;
 		}
@@ -2142,6 +2159,7 @@ INT_PTR CALLBACK DlgProc (
 					HMENU hsubmenu_region;
 					HMENU hsubmenu_limit;
 					HMENU hsubmenu_interval;
+					HMENU hsubmenu_tools;
 					ULONG mask;
 					BOOLEAN is_enabled;
 
@@ -2160,6 +2178,7 @@ INT_PTR CALLBACK DlgProc (
 					hsubmenu_region = GetSubMenu (hsubmenu, TRAY_SUBMENU_1);
 					hsubmenu_limit = GetSubMenu (hsubmenu, TRAY_SUBMENU_2);
 					hsubmenu_interval = GetSubMenu (hsubmenu, TRAY_SUBMENU_3);
+					hsubmenu_tools = GetSubMenu (hsubmenu, TRAY_SUBMENU_4);
 
 					// localize
 					_r_menu_setitemtext (hsubmenu, IDM_TRAY_SHOW, FALSE, _r_locale_getstring (IDS_TRAY_SHOW));
@@ -2167,6 +2186,7 @@ INT_PTR CALLBACK DlgProc (
 					_r_menu_setitemtext (hsubmenu, TRAY_SUBMENU_1, TRUE, _r_locale_getstring (IDS_TRAY_POPUP_1));
 					_r_menu_setitemtext (hsubmenu, TRAY_SUBMENU_2, TRUE, _r_locale_getstring (IDS_TRAY_POPUP_2));
 					_r_menu_setitemtext (hsubmenu, TRAY_SUBMENU_3, TRUE, _r_locale_getstring (IDS_TRAY_POPUP_3));
+					_r_menu_setitemtext (hsubmenu, TRAY_SUBMENU_4, TRUE, _r_locale_getstring (IDS_TOOLS));
 					_r_menu_setitemtextformat (hsubmenu, IDM_TRAY_SETTINGS, FALSE, L"%s...", _r_locale_getstring (IDS_SETTINGS));
 					_r_menu_setitemtext (hsubmenu, IDM_TRAY_WEBSITE, FALSE, _r_locale_getstring (IDS_WEBSITE));
 					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ABOUT, FALSE, _r_locale_getstring (IDS_ABOUT));
@@ -2248,6 +2268,13 @@ INT_PTR CALLBACK DlgProc (
 						);
 					}
 
+					// configure submenu #4 (tools)
+					if (hsubmenu_tools)
+					{
+						_app_tools_refresh ();
+						_app_tools_fillmenu (hsubmenu_tools, IDX_TOOLS, IDM_TOOLS_OPENFOLDER);
+					}
+
 					_r_menu_popup (hsubmenu, hwnd, NULL, TRUE);
 
 					DestroyMenu (hmenu);
@@ -2300,6 +2327,12 @@ INT_PTR CALLBACK DlgProc (
 
 				_r_config_setboolean (L"AutoreductIntervalEnable", TRUE);
 				_r_config_setlong (L"AutoreductIntervalValue", intervals_arr[idx]);
+
+				return FALSE;
+			}
+			else if (notify_code == 0 && _app_tools_isid (ctrl_id, IDX_TOOLS))
+			{
+				_app_tools_run (hwnd, ctrl_id, IDX_TOOLS);
 
 				return FALSE;
 			}
@@ -2592,6 +2625,12 @@ INT_PTR CALLBACK DlgProc (
 						}
 					}
 
+					break;
+				}
+
+				case IDM_TOOLS_OPENFOLDER:
+				{
+					_app_tools_openfolder ();
 					break;
 				}
 
